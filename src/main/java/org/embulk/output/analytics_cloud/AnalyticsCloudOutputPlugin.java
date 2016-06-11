@@ -355,7 +355,7 @@ public class AnalyticsCloudOutputPlugin
                             put("format", "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
                         }
                         if (column.getType().getJavaType().equals(long.class)) {
-                            put("scale", 12);
+                        put("scale", 6);
                             put("precision", 18);
                             put("defaultValue", 0);
                         }
