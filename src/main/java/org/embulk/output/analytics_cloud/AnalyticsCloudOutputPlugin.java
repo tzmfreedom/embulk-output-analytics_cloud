@@ -46,17 +46,16 @@ public class AnalyticsCloudOutputPlugin
     protected static Logger logger;
     private static PartnerConnection client = null;
     private static Integer batchSize;
-    public static HashMap<String, String> DATATYPE_MAP;
-    static {
-        HashMap<String, String> dataTypeMap = new HashMap<>();
-        dataTypeMap.put("string", "Text");
-        dataTypeMap.put("long", "Numeric");
-        dataTypeMap.put("boolean", "Text");
-        dataTypeMap.put("timestamp", "Date");
-        dataTypeMap.put("double", "Numeric");
-        dataTypeMap.put("json", "Text");
-        DATATYPE_MAP = dataTypeMap;
+    public static HashMap<String, String> DATATYPE_MAP = new HashMap<String, String>(){
+        {
+            put("string", "Text");
+            put("long", "Numeric");
+            put("boolean", "Text");
+            put("timestamp", "Date");
+            put("double", "Numeric");
+            put("json", "Text");
     }
+    };
 
     public interface PluginTask
             extends Task
