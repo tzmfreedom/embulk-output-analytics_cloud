@@ -46,6 +46,9 @@ public class AnalyticsCloudOutputPlugin
     protected static Logger logger;
     private static PartnerConnection client = null;
     private static Integer batchSize;
+    private static String insightsExternalDataId;
+    public static Integer partNumber = 1;
+
     public static HashMap<String, String> DATATYPE_MAP = new HashMap<String, String>(){
         {
             put("string", "Text");
@@ -54,7 +57,7 @@ public class AnalyticsCloudOutputPlugin
             put("timestamp", "Date");
             put("double", "Numeric");
             put("json", "Text");
-    }
+        }
     };
 
     public interface PluginTask
@@ -116,6 +119,7 @@ public class AnalyticsCloudOutputPlugin
                 client = Connector.newConnection(connectorConfig);
                 GetUserInfoResult userInfo = client.getUserInfo();
                 logger.info("login successful with {}", userInfo.getUserName());
+                insightsExternalDataId = this.createInsightsExternalData(task, schema);
             }
         } catch(ConnectionException ex) {
             logger.error("Login error. Please check your credentials.");
@@ -141,6 +145,22 @@ public class AnalyticsCloudOutputPlugin
             Schema schema, int taskCount,
             List<TaskReport> successTaskReports)
     {
+        if (insightsExternalDataId != null) {
+            final SObject insightsExdata = new SObject();
+            insightsExdata.setType("InsightsExternalData");
+            insightsExdata.setId(insightsExternalDataId);
+            insightsExdata.addField("Action", "Process");
+            try {
+                SaveResult[] srs = client.update(new SObject[]{insightsExdata});
+                if (srs[0].getSuccess()) {
+                    logger.info("Import is processing.");
+                } else {
+                    logger.error(srs[0].getErrors()[0].getMessage());
+                }
+            } catch (ConnectionException ex) {
+                logger.error(ex.getMessage());
+            }
+        }
         logger.info("logout");
         try {
             if (client != null) {
@@ -152,10 +172,8 @@ public class AnalyticsCloudOutputPlugin
     @Override
     public TransactionalPageOutput open(TaskSource taskSource, Schema schema, int taskIndex)
     {
-        PluginTask task = taskSource.loadTask(PluginTask.class);
-        
         PageReader reader = new PageReader(schema);
-        return new AnalyticsCloudPageOutput(reader, client, task);
+        return new AnalyticsCloudPageOutput(reader, client);
     }
     
     public class AnalyticsCloudPageOutput
@@ -164,17 +182,12 @@ public class AnalyticsCloudOutputPlugin
         private final PageReader pageReader;
         private final PartnerConnection client;
         private ArrayList<ArrayList<String>> records;
-        private Integer partNumber;
-        private PluginTask task;
-        private String insightsExternalDataId;
 
         public AnalyticsCloudPageOutput(final PageReader pageReader,
-                PartnerConnection client, PluginTask task)
+                PartnerConnection client)
         {
             this.pageReader = pageReader;
             this.client = client;
-            this.partNumber = 1;
-            this.task = task;
             this.records = new ArrayList<>();
         }
 
@@ -182,19 +195,15 @@ public class AnalyticsCloudOutputPlugin
         public void add(Page page)
         {
             try {
-                if (this.records.isEmpty() && this.partNumber == 1) {
-                    SaveResult[] srs = this.createInsightsExternalData();
-                    if (srs != null) {
-                        this.insightsExternalDataId = srs[0].getId();
-                    } else {
-                        this.insightsExternalDataId = null;
+                synchronized (AnalyticsCloudOutputPlugin.partNumber) {
+                    if (AnalyticsCloudOutputPlugin.partNumber == 0) {
+                        AnalyticsCloudOutputPlugin.partNumber++;
+                        ArrayList<String> header = new ArrayList<>();
+                        for (Column column : this.pageReader.getSchema().getColumns()) {
+                            header.add(column.getName());
+                        }
+                        this.records.add(header);
                     }
-
-                    ArrayList<String> header = new ArrayList<>();
-                    for (Column column : this.pageReader.getSchema().getColumns()) {
-                        header.add(column.getName());
-                    }
-                    this.records.add(header);
                 }
 
                 pageReader.setPage(page);
@@ -246,22 +255,12 @@ public class AnalyticsCloudOutputPlugin
         {
             try {
                 if (!this.records.isEmpty()) {
-                    SaveResult[] srs = this.action();
+                    this.action();
                 }
             } catch (ConnectionException e) {
                 e.printStackTrace();
             }
-            if (this.insightsExternalDataId != null) {
-                final SObject insightsExdata = new SObject();
-                insightsExdata.setType("InsightsExternalData");
-                insightsExdata.setId(this.insightsExternalDataId);
-                insightsExdata.addField("Action", "Process");
-                try {
-                    SaveResult[] srs = this.client.update(new SObject[]{insightsExdata});
-                } catch (ConnectionException ex) {
-                    logger.error(ex.getMessage());
-                }
-            }
+
         }
 
         @Override
@@ -281,39 +280,28 @@ public class AnalyticsCloudOutputPlugin
             return Exec.newTaskReport();
         }
 
-        private SaveResult[] action() throws ConnectionException{
+        private void action() throws ConnectionException{
             final SObject insightsExdataPart = new SObject();
             insightsExdataPart.setType("InsightsExternalDataPart");
-            insightsExdataPart.addField("InsightsExternalDataId", this.insightsExternalDataId);
+            insightsExdataPart.addField("InsightsExternalDataId", AnalyticsCloudOutputPlugin.insightsExternalDataId);
             insightsExdataPart.addField("DataFile", this.createCsvBody(this.records));
-            insightsExdataPart.addField("PartNumber", this.partNumber);
+            synchronized (AnalyticsCloudOutputPlugin.partNumber) {
+                insightsExdataPart.addField("PartNumber", AnalyticsCloudOutputPlugin.partNumber);
+                AnalyticsCloudOutputPlugin.partNumber++;
+            }
 
             SaveResult[] srs = this.client.create(new SObject[]{insightsExdataPart});
+            if (srs[0].getSuccess()) {
+                logger.info("InsightsExternalDataPart whose part number is {} is created.", insightsExdataPart.getField("PartNumber"));
+            } else {
+                String errorMessage = srs[0].getErrors()[0].getMessage();
+                logger.error(errorMessage);
+                throw new RuntimeException(errorMessage);
+            }
             this.records = new ArrayList<>();
-            this.partNumber++;
-            return srs;
         }
 
-        private SaveResult[] createInsightsExternalData() {
-            final SObject insightsExdata = new SObject();
-            insightsExdata.setType("InsightsExternalData");
-            insightsExdata.addField("EdgemartAlias", task.getEdgemartAlias());
-            insightsExdata.addField("Action", "None");
-            insightsExdata.addField("Operation", task.getOperation().get());
-            if (task.getMetadataJson().isPresent()) {
-                insightsExdata.addField("MetadataJson", task.getMetadataJson().get().getBytes());
-            } else if (task.getAutoMetadata().get().toLowerCase().equals("true")){
-                insightsExdata.addField("MetadataJson", this.createMetadataJSON().getBytes());
-            }
 
-            try {
-                return this.client.create(new SObject[]{ insightsExdata });
-            } catch (ConnectionException ex) {
-                logger.debug(ex.getMessage() + ":" + ex.getStackTrace());
-            }
-
-            return null;
-        }
 
         private byte[] createCsvBody(ArrayList<ArrayList<String>> records) {
             StringWriter stringWriter = new StringWriter();
@@ -329,60 +317,88 @@ public class AnalyticsCloudOutputPlugin
             return stringWriter.toString().getBytes();
         }
         
-        public String createMetadataJSON() {
-            HashMap<String, Object> metadata = new HashMap<>();
-            metadata.put("fileFormat", new HashMap<String, Object>(){
-                {
-                    put("charsetName", "UTF-8");
-                    put("fieldsEnclosedBy", "\"");
-                    put("fieldsDelimitedBy", ",");
-                    put("numberOfLinesToIgnore", 1);
-                }
-            });
-            
-            ArrayList<HashMap<String, Object>> fields = new ArrayList<>();
-            for (Column column : pageReader.getSchema().getColumns()) {
-                fields.add(new HashMap<String, Object>(){
-                    {
-                        put("name", column.getName());
-                        put("label", column.getName());
-                        put("fullyQualifiedName", column.getName());
-                        put("description", "");
-                        put("isSystemField", false);
-                        put("type", DATATYPE_MAP.get(column.getType().toString()));
 
-                        if (column.getType().getJavaType().equals(Timestamp.class)) {
-                            put("format", "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
-                        }
-                        if (column.getType().getJavaType().equals(long.class)) {
-                        put("scale", 6);
-                            put("precision", 18);
-                            put("defaultValue", 0);
-                        }
-                    }
-                });
+    }
+
+    private String createInsightsExternalData(PluginTask task, Schema schema) {
+        final SObject insightsExdata = new SObject();
+        insightsExdata.setType("InsightsExternalData");
+        insightsExdata.addField("EdgemartAlias", task.getEdgemartAlias());
+        insightsExdata.addField("Action", "None");
+        insightsExdata.addField("Operation", task.getOperation().get());
+        if (task.getMetadataJson().isPresent()) {
+            insightsExdata.addField("MetadataJson", task.getMetadataJson().get().getBytes());
+        } else if (task.getAutoMetadata().get().toLowerCase().equals("true")){
+            insightsExdata.addField("MetadataJson", this.createMetadataJSON(task, schema).getBytes());
+        }
+
+        try {
+            SaveResult[] srs = this.client.create(new SObject[]{ insightsExdata });
+            if (srs[0].getSuccess()) {
+                return srs[0].getId();
             }
-            
-            ArrayList<HashMap<String, Object>> objects = new ArrayList<>();
-            objects.add(new HashMap<String, Object>() {
+            String errorMessage = srs[0].getErrors()[0].getMessage();
+            logger.error(errorMessage);
+            throw new RuntimeException(errorMessage);
+        } catch (ConnectionException ex) {
+            logger.debug(ex.getMessage() + ":" + ex.getStackTrace());
+            throw new RuntimeException(ex);
+        }
+    }
+
+    private String createMetadataJSON(PluginTask task, Schema schema) {
+        HashMap<String, Object> metadata = new HashMap<>();
+        metadata.put("fileFormat", new HashMap<String, Object>(){
+            {
+                put("charsetName", "UTF-8");
+                put("fieldsEnclosedBy", "\"");
+                put("fieldsDelimitedBy", ",");
+                put("numberOfLinesToIgnore", 1);
+            }
+        });
+
+        ArrayList<HashMap<String, Object>> fields = new ArrayList<>();
+        for (Column column : schema.getColumns()) {
+            fields.add(new HashMap<String, Object>(){
                 {
-                    put("connector", "EmbulkOutputPluginConnector");
+                    put("name", column.getName());
+                    put("label", column.getName());
+                    put("fullyQualifiedName", column.getName());
                     put("description", "");
-                    put("fullyQualifiedName", task.getEdgemartAlias());
-                    put("label", task.getEdgemartAlias());
-                    put("name", task.getEdgemartAlias());
-                    put("fields", fields);
+                    put("isSystemField", false);
+                    put("type", DATATYPE_MAP.get(column.getType().toString()));
+
+                    if (column.getType().getJavaType().equals(Timestamp.class)) {
+                        put("format", "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
+                    }
+                    if (column.getType().getJavaType().equals(long.class)) {
+                        put("scale", 6);
+                        put("precision", 18);
+                        put("defaultValue", 0);
+                    }
                 }
             });
-            metadata.put("objects", objects);
-            
-            ObjectMapper mapper = new ObjectMapper();
-            try {
-                return mapper.writeValueAsString(metadata);
-            } catch (JsonProcessingException ex) {
-                logger.error(ex.getMessage());
-            }
-            return null;
         }
-    }    
+
+        ArrayList<HashMap<String, Object>> objects = new ArrayList<>();
+        objects.add(new HashMap<String, Object>() {
+            {
+                put("connector", "EmbulkOutputPluginConnector");
+                put("description", "");
+                put("fullyQualifiedName", task.getEdgemartAlias());
+                put("label", task.getEdgemartAlias());
+                put("name", task.getEdgemartAlias());
+                put("fields", fields);
+            }
+        });
+        metadata.put("objects", objects);
+
+        ObjectMapper mapper = new ObjectMapper();
+        try {
+            return mapper.writeValueAsString(metadata);
+        } catch (JsonProcessingException ex) {
+            logger.error(ex.getMessage());
+        }
+        return null;
+    }
 }
