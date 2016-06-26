@@ -213,24 +213,44 @@ public class AnalyticsCloudOutputPlugin
                     pageReader.getSchema().visitColumns(new ColumnVisitor() {
                         @Override
                         public void doubleColumn(Column column) {
-                            record.add(String.valueOf(pageReader.getDouble(column)));
+                            if (pageReader.isNull(column)) {
+                                record.add("");
+                            } else {
+                                record.add(String.valueOf(pageReader.getDouble(column)));
+                            }
                         }
                         @Override
                         public void timestampColumn(Column column) {
-                            DateTime dt = new DateTime(pageReader.getTimestamp(column).getEpochSecond()*1000);
-                            record.add(dt.toString("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"));
+                            if (pageReader.isNull(column)) {
+                                record.add("");
+                            } else {
+                                DateTime dt = new DateTime(pageReader.getTimestamp(column).getEpochSecond() * 1000);
+                                record.add(dt.toString("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"));
+                            }
                         }
                         @Override
                         public void stringColumn(Column column) {
-                            record.add(pageReader.getString(column));
+                            if (pageReader.isNull(column)) {
+                                record.add("");
+                            } else {
+                                record.add(pageReader.getString(column));
+                            }
                         }
                         @Override
                         public void longColumn(Column column) {
-                            record.add(String.valueOf(pageReader.getLong(column)));
+                            if (pageReader.isNull(column)) {
+                                record.add("");
+                            } else {
+                                record.add(String.valueOf(pageReader.getLong(column)));
+                            }
                         }
                         @Override
                         public void booleanColumn(Column column) {
-                            record.add(String.valueOf(pageReader.getBoolean(column)));
+                            if (pageReader.isNull(column)) {
+                                record.add("");
+                            } else {
+                                record.add(String.valueOf(pageReader.getBoolean(column)));
+                            }
                         }
 
                     });
