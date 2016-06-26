@@ -78,7 +78,7 @@ public class AnalyticsCloudOutputPlugin
         @ConfigDefault("18")
         public Optional<Integer> getPrecision();
 
-        @Config("defaultValue")
+        @Config("default_value")
         @ConfigDefault("0")
         public Optional<Double> getDefaultValue();
 
