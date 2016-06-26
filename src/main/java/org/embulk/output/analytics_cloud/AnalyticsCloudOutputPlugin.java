@@ -60,6 +60,34 @@ public class AnalyticsCloudOutputPlugin
         }
     };
 
+    public interface AutoMetadataTask extends Task
+    {
+        @Config("connector")
+        @ConfigDefault("\"EmbulkOutputPluginConnector\"")
+        public Optional<String> getConnectorName();
+
+        @Config("description")
+        @ConfigDefault("\"\"")
+        public Optional<String> getDescription();
+
+        @Config("scale")
+        @ConfigDefault("4")
+        public Optional<Integer> getScale();
+
+        @Config("precision")
+        @ConfigDefault("18")
+        public Optional<Integer> getPrecision();
+
+        @Config("defaultValue")
+        @ConfigDefault("0")
+        public Optional<Double> getDefaultValue();
+
+        @Config("format")
+        @ConfigDefault("\"yyyy-MM-dd'T'HH:mm:ss.SSS'Z'\"")
+        public Optional<String> getFormat();
+
+    }
+
     public interface PluginTask
             extends Task
     {
@@ -84,9 +112,9 @@ public class AnalyticsCloudOutputPlugin
         @ConfigDefault("null")
         public Optional<String> getMetadataJson();
 
-        @Config("auto_metadata")
-        @ConfigDefault("true")
-        public Optional<String> getAutoMetadata();
+        @Config("auto_metadata_settings")
+        @ConfigDefault("null")
+        public Optional<AutoMetadataTask> getAutoMetadataTask();
 
         @Config("batch_size")
         @ConfigDefault("3000")
@@ -348,7 +376,7 @@ public class AnalyticsCloudOutputPlugin
         insightsExdata.addField("Operation", task.getOperation().get());
         if (task.getMetadataJson().isPresent()) {
             insightsExdata.addField("MetadataJson", task.getMetadataJson().get().getBytes());
-        } else if (task.getAutoMetadata().get().toLowerCase().equals("true")){
+        } else if (task.getAutoMetadataTask().isPresent()){
             insightsExdata.addField("MetadataJson", this.createMetadataJSON(task, schema).getBytes());
         }
 
@@ -389,12 +417,12 @@ public class AnalyticsCloudOutputPlugin
                     put("type", DATATYPE_MAP.get(column.getType().toString()));
 
                     if (column.getType().getJavaType().equals(Timestamp.class)) {
-                        put("format", "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
+                        put("format", task.getAutoMetadataTask().get().getFormat().get());
                     }
                     if (column.getType().getJavaType().equals(long.class)) {
-                        put("scale", 6);
-                        put("precision", 18);
-                        put("defaultValue", 0);
+                        put("scale", task.getAutoMetadataTask().get().getScale().get());
+                        put("precision", task.getAutoMetadataTask().get().getPrecision().get());
+                        put("defaultValue", task.getAutoMetadataTask().get().getDefaultValue().get());
                     }
                 }
             });
@@ -403,8 +431,8 @@ public class AnalyticsCloudOutputPlugin
         ArrayList<HashMap<String, Object>> objects = new ArrayList<>();
         objects.add(new HashMap<String, Object>() {
             {
-                put("connector", "EmbulkOutputPluginConnector");
-                put("description", "");
+                put("connector", task.getAutoMetadataTask().get().getConnectorName().get());
+                put("description", task.getAutoMetadataTask().get().getDescription().get());
                 put("fullyQualifiedName", task.getEdgemartAlias());
                 put("label", task.getEdgemartAlias());
                 put("name", task.getEdgemartAlias());
